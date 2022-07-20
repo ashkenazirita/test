@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  FastMigration
+
+  SAM Template for FastMigration
+
+Parameters:
+  DUDAENV:
+    Type: 'String'
+    Default: 'TEST'
+    AllowedValues:
+      - 'TEST'
+      - 'DIRECT'
+      - 'HIBU'
+      - '1AND1'
+      - 'EU'
+    Description: 'Provide Duda ENV: DIRECT / TEST / 1AND1 / HIBU / EU'
+  HTTRRACKLAMBDAARN:
+          Type: 'String'
+Globals:
+  Function:
+    Runtime: nodejs12.x
+    Timeout: 900
+    MemorySize: 3000
+
+Resources:
+  djmfastmigrationPreHttrack:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: djmfastmigrationPreHttrack
+      CodeUri: ./djmfastmigrationPreHttrack
+      Handler: index.handler
+      Role: !GetAtt djmfastmigrationSAMRole.Arn
+
+      Tags:
+        DUDA_SERVER_TYPE: djmfastmigrationPreHttrack_LAMBDA
+        DUDA_ENV: !Ref DUDAENV
+        LAMBDA_NAME: djmfastmigrationPreHttrack
+
+  djmfastmigrationPostHttrack:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: djmfastmigrationPostHttrack
+      CodeUri: ./djmfastmigrationPostHttrack
+      Handler: index.handler
+      Role: !GetAtt djmfastmigrationSAMRole.Arn
+
+      Tags:
+        DUDA_SERVER_TYPE: djmfastmigrationPreHttrack_LAMBDA
+        DUDA_ENV: !Ref DUDAENV
+        LAMBDA_NAME: djmfastmigrationPreHttrack
+
+  djmfastmigrationSAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: djmfastmigrationSAMPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+
+
+  StatesExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - !Sub states.${AWS::Region}.amazonaws.com
+            Action: "sts:AssumeRole"
+      Path: "/"
+      Policies:
+        - PolicyName: StatesExecutionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource: "*"
+
+  djmfastmigrationFastMigrationStepFunction:
+    Type: "AWS::StepFunctions::StateMachine"
+    Properties:
+      DefinitionString:
+        !Sub
+          - |-
+            {
+              "Comment": "djmfastmigration fast migration",
+              "StartAt": "preHttpTrack",
+              "States": {
+                "preHttpTrack": {
+                   "Type": "Task",
+                   "Resource": "${preLambdaArn}",
+                   "ResultPath": "$",
+                   "Next": "httpTrack"
+                },
+                "httpTrack": {
+                  "Type": "Task",
+                  "Resource": "${httrackLambdaArn}",
+                  "InputPath": "$",
+                  "Next" : "postHttpTrack"
+               },
+               "postHttpTrack": {
+                 "Type": "Task",
+                 "Resource": "${postLambdaArn}",
+                 "InputPath": "$",
+                 "End" : true
+              }
+             }
+            }
+          - preLambdaArn: !GetAtt  djmfastmigrationPreHttrack.Arn
+            postLambdaArn: !GetAtt djmfastmigrationPostHttrack.Arn
+            httrackLambdaArn: !Ref HTTRRACKLAMBDAARN
+      RoleArn: !GetAtt [ StatesExecutionRole, Arn ]
+
+
+Outputs:
+  djmfastmigrationPostHttrack:
+    Description: "djmfastmigration Lambda Function ARN"
+    Value:
+      Fn::GetAtt:
+      - djmfastmigrationPostHttrack
+      - Arn
+
